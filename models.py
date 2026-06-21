@@ -18,6 +18,35 @@ class GraphPayload(BaseModel):
     nodes: List[CorporateNode]
     edges: List[CorporateEdge]
 
+
+class ExtractionResult(BaseModel):
+    graph: GraphPayload = Field(..., description="Structured entity-relationship graph extracted from the documents.")
+    extraction_summary: str = Field(
+        ...,
+        description="Brief summary of extracted entities, relationships, and any ambiguities or missing data.",
+    )
+    documents_processed: List[str] = Field(
+        ...,
+        description="Filenames of the source documents represented in this extraction.",
+    )
+
+
+class SynthesisResponse(BaseModel):
+    answer: str = Field(..., description="Audit-ready natural language response to the user query.")
+    entities_referenced: List[str] = Field(
+        default_factory=list,
+        description="Corporate entities cited in the answer.",
+    )
+    assumptions: List[str] = Field(
+        default_factory=list,
+        description="Explicit assumptions made because the graph computation layer was not run.",
+    )
+    data_gaps: List[str] = Field(
+        default_factory=list,
+        description="Missing or unclear information that limits the analysis.",
+    )
+
+
 class TraversalInstruction(BaseModel):
     start_node: str
     target_node: str
