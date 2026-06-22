@@ -18,6 +18,10 @@ def render_upload_status(filenames: list[str]) -> None:
 def render_extraction_result(result: ExtractionResult) -> None:
     st.subheader("Extraction Output")
     st.write(result.extraction_summary)
+    st.caption(
+        "Layer 1 segment payloads are returned independently. The tables below are a flat preview "
+        "of those literal payloads, not a Layer 2 graph computation."
+    )
 
     col_nodes, col_edges = st.columns(2)
     with col_nodes:
@@ -37,6 +41,10 @@ def render_extraction_result(result: ExtractionResult) -> None:
 
     with st.expander("Raw extracted graph JSON"):
         st.code(json.dumps(result.graph.model_dump(), indent=2), language="json")
+
+    with st.expander("Layer 1 extraction segments JSON"):
+        segment_payloads = [segment.model_dump() for segment in result.segments]
+        st.code(json.dumps(segment_payloads, indent=2), language="json")
 
 
 def render_synthesis_result(result: SynthesisResponse) -> None:
