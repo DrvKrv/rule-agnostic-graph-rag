@@ -3,7 +3,12 @@ import os
 import streamlit as st
 from dotenv import load_dotenv
 
-from core.document_loader import MAX_PDFS, build_document_corpus
+from core.document_loader import (
+    CHUNK_TOKEN_OVERLAP,
+    CHUNK_TOKEN_SIZE,
+    MAX_PDFS,
+    build_document_corpus,
+)
 from core.llm_layers import extract_graph_from_documents, resolve_api_key, synthesize_answer
 from ui.components import (
     render_extraction_result,
@@ -115,9 +120,11 @@ if run_pipeline:
                 )
                 st.session_state.extraction_result = extraction_result
                 st.session_state.routing_trace = (
-                    f"[COMPLETE] Extracted {len(extraction_result.graph.nodes)} nodes and "
-                    f"{len(extraction_result.graph.edges)} edges from "
-                    f"{len(source_documents)} document(s) under domain '{query_topic}'."
+                    f"[COMPLETE] Extracted {len(extraction_result.segments)} segment payload(s) "
+                    f"using {CHUNK_TOKEN_SIZE}-token chunks with {CHUNK_TOKEN_OVERLAP}-token overlap. "
+                    f"Flat preview contains {len(extraction_result.graph.nodes)} nodes and "
+                    f"{len(extraction_result.graph.edges)} edges from {len(source_documents)} "
+                    f"document(s) under domain '{query_topic}'."
                 )
 
             with st.spinner("Layer 3: Synthesizing audit-ready response..."):

@@ -19,6 +19,20 @@ class GraphPayload(BaseModel):
     edges: List[CorporateEdge]
 
 
+class ExtractionSegment(BaseModel):
+    chunk_index: int = Field(..., description="Zero-based chunk index within the uploaded document corpus.")
+    source_documents: List[str] = Field(
+        ...,
+        description="Filenames represented in this chunk.",
+    )
+    token_start: int = Field(..., description="Inclusive token offset for the chunk within the corpus.")
+    token_end: int = Field(..., description="Exclusive token offset for the chunk within the corpus.")
+    payload: GraphPayload = Field(
+        ...,
+        description="Clean JSON extraction payload for this chunk, matching CorporateNode and CorporateEdge schemas.",
+    )
+
+
 class ExtractionResult(BaseModel):
     graph: GraphPayload = Field(..., description="Structured entity-relationship graph extracted from the documents.")
     extraction_summary: str = Field(
@@ -28,6 +42,10 @@ class ExtractionResult(BaseModel):
     documents_processed: List[str] = Field(
         ...,
         description="Filenames of the source documents represented in this extraction.",
+    )
+    segments: List[ExtractionSegment] = Field(
+        default_factory=list,
+        description="Per-chunk clean JSON extraction payloads produced by Layer 1.",
     )
 
 
