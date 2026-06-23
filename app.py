@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from core.document_loader import (
     CHUNK_TOKEN_OVERLAP,
     CHUNK_TOKEN_SIZE,
-    MAX_PDFS,
+    MAX_UPLOAD_FILES,
     build_document_corpus,
 )
 from core.llm_layers import extract_graph_from_documents, resolve_api_key, synthesize_answer
@@ -36,15 +36,18 @@ if "routing_trace" not in st.session_state:
 with st.sidebar:
     st.header("1. Document Ingestion")
     uploaded_files = st.file_uploader(
-        "Upload SEC EDGAR filings (PDF, up to 10)",
-        type=["pdf"],
+        "Upload SEC EDGAR filings (.htm, .txt; up to 10)",
+        type=["htm", "txt"],
         accept_multiple_files=True,
-        help="Upload one to ten PDF documents for entity and relationship extraction.",
+        help="Upload one to ten SEC filing text or HTML documents for entity and relationship extraction.",
     )
 
-    if uploaded_files and len(uploaded_files) > MAX_PDFS:
-        st.error(f"Maximum {MAX_PDFS} PDFs allowed. Remove {len(uploaded_files) - MAX_PDFS} file(s).")
-        uploaded_files = uploaded_files[:MAX_PDFS]
+    if uploaded_files and len(uploaded_files) > MAX_UPLOAD_FILES:
+        st.error(
+            f"Maximum {MAX_UPLOAD_FILES} files allowed. "
+            f"Remove {len(uploaded_files) - MAX_UPLOAD_FILES} file(s)."
+        )
+        uploaded_files = uploaded_files[:MAX_UPLOAD_FILES]
 
     uploaded_names = [file.name for file in uploaded_files] if uploaded_files else []
     render_upload_status(uploaded_names)
@@ -70,7 +73,7 @@ with col1:
     if st.session_state.extraction_result:
         render_graph_preview(st.session_state.extraction_result.graph)
     else:
-        st.info("Upload PDFs and run extraction to populate the entity map.")
+        st.info("Upload SEC filing .htm or .txt files and run extraction to populate the entity map.")
 
 with col2:
     st.write("### Runtime State & Token Tracing")
@@ -102,7 +105,7 @@ if run_pipeline:
     st.session_state.synthesis_result = None
 
     if not uploaded_files:
-        st.warning("Upload at least one PDF before running the pipeline.")
+        st.warning("Upload at least one .htm or .txt SEC filing before running the pipeline.")
     elif not user_query.strip():
         st.warning("Enter a query before running the pipeline.")
     else:
@@ -110,7 +113,7 @@ if run_pipeline:
             api_key = resolve_api_key(api_key_input)
             file_payloads = [(file.name, file.getvalue()) for file in uploaded_files]
 
-            with st.spinner("Layer 1: Extracting entities and relationships from PDFs..."):
+            with st.spinner("Layer 1: Extracting entities and relationships from SEC filing text..."):
                 document_corpus, source_documents = build_document_corpus(file_payloads)
                 extraction_result = extract_graph_from_documents(
                     document_corpus=document_corpus,
