@@ -7,10 +7,10 @@ from models import ExtractionResult, GraphPayload, SynthesisResponse
 
 def render_upload_status(filenames: list[str]) -> None:
     if not filenames:
-        st.info("No PDFs uploaded yet.")
+        st.info("No SEC filing files uploaded yet.")
         return
 
-    st.success(f"{len(filenames)} PDF(s) ready for extraction.")
+    st.success(f"{len(filenames)} SEC filing file(s) ready for extraction.")
     for name in filenames:
         st.write(f"- `{name}`")
 

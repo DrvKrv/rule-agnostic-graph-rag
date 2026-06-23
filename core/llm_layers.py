@@ -22,7 +22,7 @@ DOMAIN_FOCUS = {
 }
 
 EXTRACTION_MODEL = "gpt-5.5"
-SYNTHESIS_MODEL = "gpt-4o"
+SYNTHESIS_MODEL = "gpt-5.5"
 
 
 def resolve_api_key(override: str | None) -> str:
@@ -104,7 +104,7 @@ def extract_graph_from_documents(
     client = _responses_client(api_key)
     chunks = segment_text_by_tokens(document_corpus)
     if not chunks:
-        raise ValueError("No extractable text chunks were produced from the uploaded PDFs.")
+        raise ValueError("No extractable text chunks were produced from the uploaded SEC filing files.")
 
     segments = []
     for chunk in chunks:
@@ -128,7 +128,7 @@ def extract_graph_from_documents(
     graph = _flatten_segment_payloads(segments)
     extraction_summary = (
         f"Layer 1 produced {len(segments)} stateless extraction segment(s) from "
-        f"{len(source_documents)} PDF(s) using {EXTRACTION_MODEL}. Segment payloads are "
+        f"{len(source_documents)} SEC filing file(s) using {EXTRACTION_MODEL}. Segment payloads are "
         "literal chunk-level JSON extractions; Layer 2 graph processing was not run."
     )
     return ExtractionResult(
