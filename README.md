@@ -26,6 +26,17 @@ A bundled **Demo Mode** runs Layer 2 on a multi-tiered fixture graph with no API
 * GPT-5-series synthesis for audit-style natural language output.
 * Deterministic NetworkX graph engine for Layer 2 cascade computation.
 * Interactive `pyvis` network visualization with computed-path highlighting.
+* Cancellable, non-blocking pipeline run: a **Start** button launches the
+  pipeline on a background worker thread and a **Cancel** button stops it
+  mid-run, halting further OpenAI calls (no wasted tokens) and discarding every
+  partial connection so prior results are left intact.
+* Live progress feedback: a progress bar, current stage, elapsed time, an
+  estimated time to completion, and a running count of entities/relationships
+  discovered so far.
+* A **Developer panel** exposing the worker's full state and a timestamped
+  event log for behind-the-scenes visibility.
+* Double-run protection: the Start button is disabled while a run is active and
+  a short cooldown prevents accidental rapid resubmissions.
 
 ## System Architecture
 
@@ -52,6 +63,23 @@ The intended pipeline operates in three decoupled layers.
 3. **Layer 3: Synthesis & Display**
    * GPT-5.5 synthesis that treats the Layer 2 computed result, path logs, and formulas as authoritative ground truth and explains exactly how the figure was derived.
    * The UI displays extraction tables, an interactive `pyvis` network graph (with the computed path highlighted), the Layer 2 computation with path logs/warnings, raw JSON, and the synthesis output.
+
+## Run Controls & Cancellation
+
+The full LLM pipeline can issue dozens of GPT-5 extraction calls over a large
+SEC filing, so it runs on a background worker thread (`core/pipeline_runner.py`)
+while the Streamlit UI stays responsive:
+
+* **Start** launches the run. It is disabled while a run is in flight, and a
+  short cooldown blocks accidental rapid re-submissions.
+* **Cancel** requests a stop. The worker checks a cancellation flag before every
+  billable OpenAI call, so token spend halts almost immediately. Results are
+  only committed to the page once a run finishes successfully, so cancelling
+  cleanly discards every partial node/edge built mid-run and leaves any prior
+  results untouched — there is nothing to "undo".
+* Progress (stage, elapsed, ETA, and partial entity/relationship counts) and a
+  timestamped event log are surfaced live, with a **Developer panel** for the
+  raw worker state.
 
 ## Getting Started
 
