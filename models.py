@@ -73,6 +73,31 @@ class TraversalInstruction(BaseModel):
     aggregation_method: Literal["multiply_and_cascade", "sum_all", "min_bottleneck"]
 
 
+class QueryRoute(BaseModel):
+    """Stage 1 routing output: which mechanism and entities a query targets."""
+
+    mechanism: Literal[
+        "Financial Liability Cascade",
+        "Voting Power Structure",
+        "Tax Leakage Tracing",
+    ] = Field(
+        ...,
+        description="The corporate mechanism the question is about, used to pick the metric and aggregation.",
+    )
+    start_node: Optional[str] = Field(
+        None,
+        description="Upstream/controlling entity to traverse FROM, matched to an existing graph node id, or null if unclear.",
+    )
+    target_node: Optional[str] = Field(
+        None,
+        description="Downstream/debtor entity to traverse TO, matched to an existing graph node id, or null if unclear.",
+    )
+    reasoning: str = Field(
+        "",
+        description="Brief justification for the chosen mechanism and entities.",
+    )
+
+
 class PathHop(BaseModel):
     """A single directed edge traversed within a path."""
 

@@ -9,6 +9,7 @@ from models import (
     ExtractionResult,
     ExtractionSegment,
     GraphPayload,
+    QueryRoute,
     SynthesisResponse,
 )
 
@@ -27,8 +28,11 @@ DOMAIN_FOCUS = {
     ),
 }
 
+# GPT-5 series only. EXTRACTION/SYNTHESIS use the deep-parsing model; ROUTING uses
+# a fast model for the small Stage 1 query-routing call.
 EXTRACTION_MODEL = "gpt-5.5"
 SYNTHESIS_MODEL = "gpt-5.5"
+ROUTING_MODEL = "gpt-5.5"
 
 
 def resolve_api_key(override: str | None) -> str:
@@ -46,6 +50,54 @@ def _instructor_client(api_key: str):
 
 def _responses_client(api_key: str) -> OpenAI:
     return OpenAI(api_key=api_key)
+
+
+def route_query(
+    user_query: str,
+    default_topic: str,
+    node_ids: list[str],
+    api_key: str,
+) -> QueryRoute:
+    """Stage 1 routing: extract mechanism + entities from a natural-language query.
+
+    A fast GPT-5 call maps the question onto the corporate mechanism and the two
+    entities in play, constrained to entity names that actually exist in the
+    extracted graph. Returns a ``QueryRoute``; callers should fall back to
+    deterministic selection when ``start_node`` / ``target_node`` come back null.
+    """
+
+    client = _responses_client(api_key)
+    available = "\n".join(f"- {name}" for name in node_ids) if node_ids else "(none)"
+
+    response = client.responses.parse(
+        model=ROUTING_MODEL,
+        input=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a fast routing layer for a corporate governance graph engine. "
+                    "Given a user question and the list of entities present in the graph, decide "
+                    "which corporate mechanism applies and which two entities the traversal should "
+                    "run between. Choose start_node as the upstream/controlling/guarantor entity and "
+                    "target_node as the downstream/debtor/subsidiary entity. Only use entity names "
+                    "that appear EXACTLY in the provided list. If you cannot confidently match an "
+                    "entity, return null for it. Do not invent entities or perform any math."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"User question: {user_query}\n"
+                    f"Default mechanism if ambiguous: {default_topic}\n\n"
+                    f"Entities available in the graph:\n{available}"
+                ),
+            },
+        ],
+        text_format=QueryRoute,
+    )
+    if response.output_parsed is None:
+        return QueryRoute(mechanism=default_topic, start_node=None, target_node=None)
+    return response.output_parsed
 
 
 def _extract_chunk_payload(
