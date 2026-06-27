@@ -30,6 +30,10 @@ A bundled **Demo Mode** runs Layer 2 on a multi-tiered fixture graph with no API
 
 The intended pipeline operates in three decoupled layers.
 
+0. **Stage 1 Routing (GPT-5)**
+   * `core/llm_layers.py::route_query()` reads the natural-language question and the list of entities present in the extracted graph, then returns a `QueryRoute` (mechanism + start/target entities) constrained to real node names.
+   * The result is converted into a `TraversalInstruction` via `core/routing.py`. Manual sidebar overrides take priority, and deterministic auto-selection is used whenever the router is unsure or unavailable.
+
 1. **Layer 1: Map-Reduce Extraction**
    * Input: `.htm` or `.txt` SEC filing files.
    * HTML files are parsed as raw filing text with BeautifulSoup, not as visual page layouts.
@@ -42,7 +46,7 @@ The intended pipeline operates in three decoupled layers.
    * Loads the extracted `GraphPayload` into a directed graph, merges duplicate nodes/edges from multi-chunk extraction, detects cycles, enumerates all simple paths between two entities, and computes deterministic metrics.
    * Rule-agnostic: it reads whichever edge attribute the `TraversalInstruction` names (`edge_weight_to_track`), applies an optional ceiling (`edge_constraint`, e.g. `guarantee_cap_usd`), and aggregates with `multiply_and_cascade`, `sum_all`, or `min_bottleneck`.
    * Non-LLM and stateless with respect to document ingestion.
-   * `core/routing.py` translates a routing domain + graph into a concrete `TraversalInstruction` (start/target entities are auto-selected or overridden in the UI).
+   * `core/routing.py` translates a routing domain + graph into a concrete `TraversalInstruction`. Start/target entities come from the Stage 1 GPT-5 router, manual UI overrides, or deterministic auto-selection (in that priority order).
 
 3. **Layer 3: Synthesis & Display**
    * GPT-5.5 synthesis that treats the Layer 2 computed result, path logs, and formulas as authoritative ground truth and explains exactly how the figure was derived.
@@ -90,7 +94,7 @@ The current milestone targets parent guarantees of subsidiary debt using `.txt` 
 * Frontend: `Streamlit`
 * Filing Parsing: `BeautifulSoup`
 * Tokenization: `tiktoken`
-* LLM Orchestration: OpenAI API, GPT-5 series only
+* LLM Orchestration: OpenAI API, GPT-5 series only (extraction, fast query routing, and synthesis)
 * Structured Outputs: OpenAI Responses API + `Pydantic`
 * Synthesis: GPT-5 series
 * Graph Mathematics: `networkx` (deterministic Layer 2)
@@ -134,6 +138,7 @@ The data contracts in `models.py` are the source of truth between layers:
 * `GraphPayload` is what Layer 1 hands to Layer 2.
 * `TraversalInstruction` tells the rule-agnostic engine which attribute to track, which constraint to cap with, and how to aggregate.
 * `CalculationResult` / `TraversalPath` / `PathHop` are the structured Layer 2 output (path logs, formulas, warnings, final totals) consumed by Layer 3.
+* `QueryRoute` is the Stage 1 routing output (mechanism + start/target entities) extracted from the user's natural-language question.
 
 Layer 2 is intentionally generic: new corporate mechanisms are added as new edge attributes plus new routing entries in `core/routing.py`, not as new branches inside `GovernanceGraphEngine`.
 
