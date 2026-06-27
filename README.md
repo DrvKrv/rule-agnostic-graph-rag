@@ -17,6 +17,7 @@ A bundled **Demo Mode** runs Layer 2 on a multi-tiered fixture graph with no API
 ## Key Features
 
 * SEC filing ingestion for `.htm` and `.txt` files only. PDF uploads are not accepted.
+* Robust text extraction: `.htm` and markup-laden `.txt` "complete submission" files are both cleaned through BeautifulSoup (scripts, styles, HTML/XBRL noise removed) before chunking.
 * Up to 10 uploaded SEC filing files per run.
 * HTML cleanup with BeautifulSoup to remove scripts, styles, layout markup, and Inline XBRL/HTML noise before chunking.
 * Token-window chunking: 4,000-token chunks with 500-token overlap via `tiktoken`.

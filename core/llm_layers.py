@@ -29,10 +29,10 @@ DOMAIN_FOCUS = {
 }
 
 # GPT-5 series only. EXTRACTION/SYNTHESIS use the deep-parsing model; ROUTING uses
-# a fast model for the small Stage 1 query-routing call.
+# a smaller, faster model for the small Stage 1 query-routing call.
 EXTRACTION_MODEL = "gpt-5.5"
 SYNTHESIS_MODEL = "gpt-5.5"
-ROUTING_MODEL = "gpt-5.5"
+ROUTING_MODEL = "gpt-5-mini"
 
 
 def resolve_api_key(override: str | None) -> str:
