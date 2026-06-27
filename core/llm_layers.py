@@ -4,7 +4,13 @@ import instructor
 from openai import OpenAI
 
 from core.document_loader import segment_text_by_tokens
-from models import ExtractionResult, ExtractionSegment, GraphPayload, SynthesisResponse
+from models import (
+    CalculationResult,
+    ExtractionResult,
+    ExtractionSegment,
+    GraphPayload,
+    SynthesisResponse,
+)
 
 DOMAIN_FOCUS = {
     "Financial Liability Cascade": (
@@ -146,10 +152,41 @@ def synthesize_answer(
     source_documents: list[str],
     extraction_summary: str,
     api_key: str,
+    calculation: CalculationResult | None = None,
 ) -> SynthesisResponse:
     domain_focus = DOMAIN_FOCUS.get(query_topic, DOMAIN_FOCUS["Financial Liability Cascade"])
     client = _instructor_client(api_key)
     graph_json = graph_payload.model_dump_json(indent=2)
+
+    if calculation is not None and calculation.computed:
+        system_prompt = (
+            "You are a corporate governance analyst producing audit-ready responses. "
+            "A deterministic NetworkX graph engine (Layer 2) HAS been run and produced "
+            "the computed result, path logs, and formulas provided below. Treat those "
+            "numbers as authoritative ground truth: do not recompute, alter, or invent "
+            "different totals. Explain in plain language exactly how the final figure was "
+            "derived using the supplied path logs and formula. Surface any warnings and "
+            "data gaps reported by the engine."
+        )
+        calc_block = (
+            "\n\nDeterministic Layer 2 calculation result (authoritative):\n"
+            f"{calculation.model_dump_json(indent=2)}"
+        )
+    else:
+        system_prompt = (
+            "You are a corporate governance analyst producing audit-ready responses. "
+            "Answer using only the extracted graph data provided. The deterministic graph "
+            "computation layer did NOT produce a usable result, so do not invent cascaded "
+            "totals or computed path metrics. Clearly state assumptions, missing data, and "
+            "limitations. When quantitative cascade math would normally be required, explain "
+            "what can and cannot be concluded from the extracted relationships alone."
+        )
+        calc_block = ""
+        if calculation is not None:
+            calc_block = (
+                "\n\nLayer 2 ran but could not compute a value. Engine diagnostics:\n"
+                f"{calculation.model_dump_json(indent=2)}"
+            )
 
     return client.chat.completions.create(
         model=SYNTHESIS_MODEL,
@@ -157,14 +194,7 @@ def synthesize_answer(
         messages=[
             {
                 "role": "system",
-                "content": (
-                    "You are a corporate governance analyst producing audit-ready responses. "
-                    "Answer using only the extracted graph data provided. The deterministic graph "
-                    "computation layer has NOT been run, so do not invent cascaded totals or "
-                    "computed path metrics. Clearly state assumptions, missing data, and limitations. "
-                    "When quantitative cascade math would normally be required, explain what can "
-                    "and cannot be concluded from the extracted relationships alone."
-                ),
+                "content": system_prompt,
             },
             {
                 "role": "user",
@@ -175,6 +205,7 @@ def synthesize_answer(
                     f"Source documents: {', '.join(source_documents)}\n"
                     f"Extraction summary: {extraction_summary}\n\n"
                     f"Extracted graph payload:\n{graph_json}"
+                    f"{calc_block}"
                 ),
             },
         ],
