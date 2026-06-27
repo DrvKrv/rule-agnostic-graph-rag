@@ -1,4 +1,5 @@
 import os
+from typing import Callable, Optional
 
 import instructor
 from openai import OpenAI
@@ -157,15 +158,29 @@ def extract_graph_from_documents(
     source_documents: list[str],
     query_topic: str,
     api_key: str,
+    progress_cb: Optional[Callable[[int, int, GraphPayload], None]] = None,
+    cancel_cb: Optional[Callable[[], None]] = None,
 ) -> ExtractionResult:
+    """Layer 1 map-reduce extraction over token-windowed chunks.
+
+    ``progress_cb(chunks_done, chunks_total, chunk_payload)`` is invoked after
+    each chunk so callers can surface progress / ETA. ``cancel_cb()`` is invoked
+    before every chunk's LLM call; it should raise to abort the run cleanly so no
+    further OpenAI calls (and therefore no further tokens) are consumed.
+    """
+
     domain_focus = DOMAIN_FOCUS.get(query_topic, DOMAIN_FOCUS["Financial Liability Cascade"])
     client = _responses_client(api_key)
     chunks = segment_text_by_tokens(document_corpus)
     if not chunks:
         raise ValueError("No extractable text chunks were produced from the uploaded SEC filing files.")
 
+    total = len(chunks)
     segments = []
-    for chunk in chunks:
+    for index, chunk in enumerate(chunks):
+        # Check for cancellation *before* spending tokens on the next chunk.
+        if cancel_cb is not None:
+            cancel_cb()
         payload = _extract_chunk_payload(
             client=client,
             chunk_text=chunk["text"],
@@ -182,6 +197,8 @@ def extract_graph_from_documents(
                 payload=payload,
             )
         )
+        if progress_cb is not None:
+            progress_cb(index + 1, total, payload)
 
     graph = _flatten_segment_payloads(segments)
     extraction_summary = (
