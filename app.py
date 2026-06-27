@@ -10,7 +10,12 @@ from core.document_loader import (
     build_document_corpus,
 )
 from core.engine import GovernanceGraphEngine
-from core.llm_layers import extract_graph_from_documents, resolve_api_key, synthesize_answer
+from core.llm_layers import (
+    extract_graph_from_documents,
+    resolve_api_key,
+    route_query,
+    synthesize_answer,
+)
 from core.routing import build_instruction
 from core.sample_data import load_sample_extraction_result
 from ui.components import (
@@ -92,8 +97,12 @@ with st.sidebar:
     render_upload_status(uploaded_names)
 
     st.header("2. Execution Parameters")
+    st.caption(
+        "Your natural-language query is auto-routed (Stage 1 GPT-5) to a mechanism and the "
+        "two entities in play. The controls below act as a default/override."
+    )
     query_topic = st.selectbox(
-        "Routing Domain Override",
+        "Routing Domain (default / fallback)",
         ["Financial Liability Cascade", "Voting Power Structure", "Tax Leakage Tracing"],
     )
     start_override = st.text_input(
@@ -201,15 +210,40 @@ if run_pipeline:
                     f"document(s) under domain '{query_topic}'."
                 )
 
+            with st.spinner("Stage 1 routing: mapping the query to a mechanism and entities..."):
+                effective_topic = query_topic
+                routed_start = start_override or None
+                routed_target = target_override or None
+                if not (routed_start and routed_target):
+                    try:
+                        node_ids = [node.id for node in extraction_result.graph.nodes]
+                        route = route_query(
+                            user_query=user_query.strip(),
+                            default_topic=query_topic,
+                            node_ids=node_ids,
+                            api_key=api_key,
+                        )
+                        effective_topic = route.mechanism or query_topic
+                        routed_start = routed_start or route.start_node
+                        routed_target = routed_target or route.target_node
+                        st.session_state.routing_trace += (
+                            f"\n[ROUTE] mechanism='{effective_topic}', "
+                            f"start='{routed_start}', target='{routed_target}'."
+                        )
+                    except Exception as route_exc:
+                        st.session_state.routing_trace += (
+                            f"\n[ROUTE] LLM routing skipped ({route_exc}); using deterministic selection."
+                        )
+
             with st.spinner("Layer 2: Running deterministic graph cascade computation..."):
                 calculation = run_layer_2(
-                    extraction_result, query_topic, start_override, target_override
+                    extraction_result, effective_topic, routed_start, routed_target
                 )
 
             with st.spinner("Layer 3: Synthesizing audit-ready response..."):
                 synthesis_result = synthesize_answer(
                     user_query=user_query.strip(),
-                    query_topic=query_topic,
+                    query_topic=effective_topic,
                     graph_payload=extraction_result.graph,
                     source_documents=source_documents,
                     extraction_summary=extraction_result.extraction_summary,
