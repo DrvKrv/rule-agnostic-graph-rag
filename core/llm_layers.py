@@ -1,4 +1,5 @@
 import os
+from typing import Callable, Optional
 
 import instructor
 from openai import OpenAI
@@ -34,6 +35,13 @@ EXTRACTION_MODEL = "gpt-5.5"
 SYNTHESIS_MODEL = "gpt-5.5"
 ROUTING_MODEL = "gpt-5-mini"
 
+# Bound per-request latency so a single slow/hung call cannot freeze the pipeline
+# for the SDK's default 10-minute timeout. The SDK applies exponential backoff
+# between retries, which also smooths over the 429s that large multi-chunk
+# documents trigger when every chunk is sent in quick succession.
+REQUEST_TIMEOUT_SECONDS = 120.0
+MAX_RETRIES = 4
+
 
 def resolve_api_key(override: str | None) -> str:
     api_key = (override or "").strip() or os.environ.get("OPENAI_API_KEY", "").strip()
@@ -45,11 +53,21 @@ def resolve_api_key(override: str | None) -> str:
 
 
 def _instructor_client(api_key: str):
-    return instructor.from_openai(OpenAI(api_key=api_key))
+    return instructor.from_openai(
+        OpenAI(
+            api_key=api_key,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+            max_retries=MAX_RETRIES,
+        )
+    )
 
 
 def _responses_client(api_key: str) -> OpenAI:
-    return OpenAI(api_key=api_key)
+    return OpenAI(
+        api_key=api_key,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+        max_retries=MAX_RETRIES,
+    )
 
 
 def route_query(
@@ -157,30 +175,57 @@ def extract_graph_from_documents(
     source_documents: list[str],
     query_topic: str,
     api_key: str,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> ExtractionResult:
+    """Run stateless per-chunk Layer 1 extraction across the document corpus.
+
+    Extraction is resilient: a chunk that fails (transient API error, rate-limit
+    exhaustion, malformed structured output) is recorded and skipped rather than
+    discarding every other chunk's work. The call only raises when *no* chunk
+    could be extracted. ``progress_callback(completed, total)`` is invoked after
+    each chunk so callers (e.g. the Streamlit UI) can surface progress on large,
+    multi-chunk filings.
+    """
+
     domain_focus = DOMAIN_FOCUS.get(query_topic, DOMAIN_FOCUS["Financial Liability Cascade"])
     client = _responses_client(api_key)
     chunks = segment_text_by_tokens(document_corpus)
     if not chunks:
         raise ValueError("No extractable text chunks were produced from the uploaded SEC filing files.")
 
-    segments = []
-    for chunk in chunks:
-        payload = _extract_chunk_payload(
-            client=client,
-            chunk_text=chunk["text"],
-            source_documents=source_documents,
-            query_topic=query_topic,
-            domain_focus=domain_focus,
-        )
-        segments.append(
-            ExtractionSegment(
-                chunk_index=chunk["chunk_index"],
+    total = len(chunks)
+    segments: list[ExtractionSegment] = []
+    failed_chunks: list[tuple[int, str]] = []
+
+    for completed, chunk in enumerate(chunks, start=1):
+        try:
+            payload = _extract_chunk_payload(
+                client=client,
+                chunk_text=chunk["text"],
                 source_documents=source_documents,
-                token_start=chunk["token_start"],
-                token_end=chunk["token_end"],
-                payload=payload,
+                query_topic=query_topic,
+                domain_focus=domain_focus,
             )
+            segments.append(
+                ExtractionSegment(
+                    chunk_index=chunk["chunk_index"],
+                    source_documents=source_documents,
+                    token_start=chunk["token_start"],
+                    token_end=chunk["token_end"],
+                    payload=payload,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - isolate one bad chunk from the rest
+            failed_chunks.append((chunk["chunk_index"], f"{type(exc).__name__}: {exc}"))
+        finally:
+            if progress_callback is not None:
+                progress_callback(completed, total)
+
+    if not segments:
+        detail = "; ".join(f"chunk {idx}: {msg}" for idx, msg in failed_chunks)
+        raise ValueError(
+            "Layer 1 extraction failed for every chunk of the uploaded filing(s). "
+            f"Last errors -> {detail}"
         )
 
     graph = _flatten_segment_payloads(segments)
@@ -189,6 +234,11 @@ def extract_graph_from_documents(
         f"{len(source_documents)} SEC filing file(s) using {EXTRACTION_MODEL}. Segment payloads are "
         "literal chunk-level JSON extractions; Layer 2 graph processing was not run."
     )
+    if failed_chunks:
+        extraction_summary += (
+            f" {len(failed_chunks)} of {total} chunk(s) failed extraction and were skipped; "
+            "results are partial."
+        )
     return ExtractionResult(
         graph=graph,
         extraction_summary=extraction_summary,
