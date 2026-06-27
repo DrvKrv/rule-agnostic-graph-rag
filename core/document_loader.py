@@ -15,7 +15,11 @@ def _tokenizer() -> tiktoken.Encoding:
 
 
 def _decode_document(file_bytes: bytes) -> str:
-    for encoding in ("utf-8", "latin-1"):
+    # SEC EDGAR filings are almost always Windows-1252 (cp1252) rather than
+    # latin-1; trying cp1252 before latin-1 preserves smart quotes, em dashes,
+    # and section symbols that otherwise decode to C1 control characters
+    # (e.g. \x93 / \x94 garbling entity names defined inside quotation marks).
+    for encoding in ("utf-8", "cp1252", "latin-1"):
         try:
             return file_bytes.decode(encoding)
         except UnicodeDecodeError:
