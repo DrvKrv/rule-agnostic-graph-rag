@@ -61,11 +61,51 @@ class GovernanceGraphEngine:
         self.graph.clear()
         self._merge_warnings: list[str] = []
 
+        # Build a case-insensitive canonical-name map across every entity that
+        # appears as a node or an edge endpoint. Stateless per-chunk extraction
+        # routinely emits the same company under different casing (e.g.
+        # "Freedom VCM, Inc." and "FREEDOM VCM, INC."); without canonicalisation
+        # these fragment into separate nodes and break path traversal.
+        self._canonical: dict[str, str] = {}
+        endpoint_names: list[str] = [node.id for node in payload.nodes]
+        for edge in payload.edges:
+            endpoint_names.extend([edge.source, edge.target])
+        for name in endpoint_names:
+            self._register_canonical(name)
+
         for node in payload.nodes:
-            self._upsert_node(node.id, node.model_dump())
+            attrs = node.model_dump()
+            attrs["id"] = self._canonical_name(node.id)
+            self._upsert_node(self._canonical_name(node.id), attrs)
 
         for edge in payload.edges:
             self._upsert_edge(edge)
+
+    @staticmethod
+    def _canonical_key(name: str) -> str:
+        return " ".join((name or "").split()).casefold()
+
+    def _register_canonical(self, name: str) -> None:
+        """Pick a stable display name for each case-insensitive entity key.
+
+        Prefer a variant that is not fully upper-cased (real filings use mixed
+        case for the canonical legal name and reserve all-caps for headings/
+        signature blocks); fall back to the first variant seen.
+        """
+        if not name:
+            return
+        key = self._canonical_key(name)
+        if not key:
+            return
+        current = self._canonical.get(key)
+        if current is None:
+            self._canonical[key] = name
+            return
+        if current.isupper() and not name.isupper():
+            self._canonical[key] = name
+
+    def _canonical_name(self, name: str) -> str:
+        return self._canonical.get(self._canonical_key(name), name)
 
     def _upsert_node(self, node_id: str, attrs: dict) -> None:
         if not node_id:
@@ -79,7 +119,8 @@ class GovernanceGraphEngine:
             self.graph.add_node(node_id, **attrs)
 
     def _upsert_edge(self, edge: CorporateEdge) -> None:
-        source, target = edge.source, edge.target
+        source = self._canonical_name(edge.source)
+        target = self._canonical_name(edge.target)
         if not source or not target:
             return
 
@@ -273,7 +314,18 @@ class GovernanceGraphEngine:
                 )
             )
 
-            if weight_value is None:
+            if weight_value is None and constraint_value is not None:
+                # The tracked metric is absent but a constraint (e.g. a guarantee
+                # cap) is present. In corporate filings a guarantee cap with no
+                # separately stated liability IS the bounded exposure for that
+                # hop, so use it as a proxy weight rather than discarding the hop.
+                weights.append(constraint_value)
+                notes.append(
+                    f"Edge {source} -> {target} has no '{weight_field}'; used "
+                    f"'{constraint_field}' value {_format_number(constraint_value, is_fraction)} "
+                    "as an exposure proxy."
+                )
+            elif weight_value is None:
                 notes.append(
                     f"Edge {source} -> {target} has no '{weight_field}' value."
                 )
