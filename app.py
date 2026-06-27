@@ -195,12 +195,23 @@ if run_pipeline:
 
             with st.spinner("Layer 1: Extracting entities and relationships from SEC filing text..."):
                 document_corpus, source_documents = build_document_corpus(file_payloads)
+                extraction_progress = st.progress(0.0, text="Layer 1: preparing extraction...")
+
+                def _report_extraction_progress(completed: int, total: int) -> None:
+                    fraction = completed / total if total else 1.0
+                    extraction_progress.progress(
+                        min(fraction, 1.0),
+                        text=f"Layer 1: extracted chunk {completed} of {total}...",
+                    )
+
                 extraction_result = extract_graph_from_documents(
                     document_corpus=document_corpus,
                     source_documents=source_documents,
                     query_topic=query_topic,
                     api_key=api_key,
+                    progress_callback=_report_extraction_progress,
                 )
+                extraction_progress.empty()
                 st.session_state.extraction_result = extraction_result
                 st.session_state.routing_trace = (
                     f"[COMPLETE] Extracted {len(extraction_result.segments)} segment payload(s) "
@@ -216,7 +227,11 @@ if run_pipeline:
                 routed_target = target_override or None
                 if not (routed_start and routed_target):
                     try:
-                        node_ids = [node.id for node in extraction_result.graph.nodes]
+                        node_ids = list(
+                            dict.fromkeys(
+                                node.id for node in extraction_result.graph.nodes if node.id
+                            )
+                        )
                         route = route_query(
                             user_query=user_query.strip(),
                             default_topic=query_topic,
