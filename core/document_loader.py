@@ -35,7 +35,21 @@ def _extract_text_from_html(raw_text: str) -> str:
     return _normalize_lines(soup.get_text(separator="\n"))
 
 
+def _looks_like_markup(raw_text: str) -> bool:
+    """Heuristic: detect SEC complete-submission .txt files that embed HTML/SGML/XBRL."""
+    sample = raw_text[:10_000].lower()
+    markers = ("<sec-document", "<html", "<table", "<xbrl", "<document", "<type>")
+    if any(marker in sample for marker in markers):
+        return True
+    # Fall back to tag density across the document.
+    return raw_text.count("<") > 50
+
+
 def _extract_text_from_txt(raw_text: str) -> str:
+    # SEC "complete submission" .txt files are concatenated SGML + HTML + XBRL, not
+    # plain text. Strip the markup so the extractor sees readable filing prose.
+    if _looks_like_markup(raw_text):
+        return _extract_text_from_html(raw_text)
     return _normalize_lines(raw_text)
 
 

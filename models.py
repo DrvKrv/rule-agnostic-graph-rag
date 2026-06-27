@@ -71,3 +71,94 @@ class TraversalInstruction(BaseModel):
     edge_weight_to_track: Literal["ownership_percentage", "voting_power_percentage", "liability_exposure_usd"]
     edge_constraint: Optional[Literal["guarantee_cap_usd"]] = None
     aggregation_method: Literal["multiply_and_cascade", "sum_all", "min_bottleneck"]
+
+
+class QueryRoute(BaseModel):
+    """Stage 1 routing output: which mechanism and entities a query targets."""
+
+    mechanism: Literal[
+        "Financial Liability Cascade",
+        "Voting Power Structure",
+        "Tax Leakage Tracing",
+    ] = Field(
+        ...,
+        description="The corporate mechanism the question is about, used to pick the metric and aggregation.",
+    )
+    start_node: Optional[str] = Field(
+        None,
+        description="Upstream/controlling entity to traverse FROM, matched to an existing graph node id, or null if unclear.",
+    )
+    target_node: Optional[str] = Field(
+        None,
+        description="Downstream/debtor entity to traverse TO, matched to an existing graph node id, or null if unclear.",
+    )
+    reasoning: str = Field(
+        "",
+        description="Brief justification for the chosen mechanism and entities.",
+    )
+
+
+class PathHop(BaseModel):
+    """A single directed edge traversed within a path."""
+
+    source: str = Field(..., description="Upstream entity for this hop.")
+    target: str = Field(..., description="Downstream entity for this hop.")
+    weight_field: str = Field(..., description="Edge attribute tracked for this hop.")
+    weight_value: Optional[float] = Field(
+        None, description="Value of the tracked attribute on this edge, if present."
+    )
+    constraint_field: Optional[str] = Field(
+        None, description="Edge attribute applied as a ceiling/constraint, if any."
+    )
+    constraint_value: Optional[float] = Field(
+        None, description="Value of the constraint attribute on this edge, if present."
+    )
+
+
+class TraversalPath(BaseModel):
+    """One fully resolved route from start to target, with its computed contribution."""
+
+    nodes: List[str] = Field(..., description="Ordered entity names visited along the path.")
+    hops: List[PathHop] = Field(default_factory=list, description="Per-edge detail for the path.")
+    raw_value: Optional[float] = Field(
+        None, description="Aggregated value before any constraint cap was applied."
+    )
+    constrained_value: Optional[float] = Field(
+        None, description="Aggregated value after applying the edge constraint cap, if any."
+    )
+    formula: str = Field(
+        "", description="Human-readable arithmetic showing how the path value was derived."
+    )
+    notes: List[str] = Field(
+        default_factory=list, description="Per-path warnings such as missing weights."
+    )
+
+
+class CalculationResult(BaseModel):
+    """Deterministic Layer 2 output handed to the synthesis layer."""
+
+    computed: bool = Field(
+        ..., description="True when the deterministic graph engine produced a result."
+    )
+    instruction: TraversalInstruction = Field(
+        ..., description="The traversal instruction that was executed."
+    )
+    aggregation_method: str = Field(..., description="Aggregation method applied across paths.")
+    paths: List[TraversalPath] = Field(
+        default_factory=list, description="All resolved start-to-target paths."
+    )
+    final_value: Optional[float] = Field(
+        None, description="Final computed metric across all paths after aggregation."
+    )
+    unit: str = Field(
+        "", description="Unit of the final value, e.g. 'USD' or 'fraction (0.0-1.0)'."
+    )
+    formula_summary: str = Field(
+        "", description="Plain-language description of how the final value was derived."
+    )
+    cycles_detected: Optional[List[List[str]]] = Field(
+        None, description="Cycles found in the graph that may invalidate DAG assumptions."
+    )
+    warnings: List[str] = Field(
+        default_factory=list, description="Structural or data-quality warnings."
+    )

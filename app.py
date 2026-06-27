@@ -9,10 +9,19 @@ from core.document_loader import (
     MAX_UPLOAD_FILES,
     build_document_corpus,
 )
-from core.llm_layers import extract_graph_from_documents, resolve_api_key, synthesize_answer
+from core.engine import GovernanceGraphEngine
+from core.llm_layers import (
+    extract_graph_from_documents,
+    resolve_api_key,
+    route_query,
+    synthesize_answer,
+)
+from core.routing import build_instruction
+from core.sample_data import load_sample_extraction_result
 from ui.components import (
+    render_calculation_result,
     render_extraction_result,
-    render_graph_preview,
+    render_graph_visualization,
     render_synthesis_result,
     render_upload_status,
 )
@@ -26,12 +35,47 @@ st.subheader("Corporate Governance & Liability Cascade Analyzer")
 
 if "extraction_result" not in st.session_state:
     st.session_state.extraction_result = None
+if "calculation_result" not in st.session_state:
+    st.session_state.calculation_result = None
 if "synthesis_result" not in st.session_state:
     st.session_state.synthesis_result = None
 if "pipeline_error" not in st.session_state:
     st.session_state.pipeline_error = None
 if "routing_trace" not in st.session_state:
     st.session_state.routing_trace = "[IDLE] Awaiting document ingestion..."
+if "compute_trace" not in st.session_state:
+    st.session_state.compute_trace = "[IDLE] Layer 2 has not run yet."
+
+
+def run_layer_2(extraction_result, query_topic, start_override, target_override):
+    """Execute the deterministic graph engine and update session state."""
+    engine = GovernanceGraphEngine()
+    engine.load_graph_from_payload(extraction_result.graph)
+
+    instruction = build_instruction(
+        domain=query_topic,
+        graph=engine.graph,
+        start_node=start_override or None,
+        target_node=target_override or None,
+    )
+    if instruction is None:
+        st.session_state.calculation_result = None
+        st.session_state.compute_trace = (
+            "[SKIPPED] Graph too small or start/target could not be determined."
+        )
+        return None
+
+    calculation = engine.execute_rule_agnostic_cascade(instruction)
+    st.session_state.calculation_result = calculation
+    st.session_state.compute_trace = (
+        f"[{'COMPLETE' if calculation.computed else 'NO RESULT'}] "
+        f"{instruction.aggregation_method} on '{instruction.edge_weight_to_track}' "
+        f"from {instruction.start_node} -> {instruction.target_node}. "
+        f"Paths found: {len(calculation.paths)}. "
+        f"Final: {calculation.final_value} {calculation.unit}."
+    )
+    return calculation
+
 
 with st.sidebar:
     st.header("1. Document Ingestion")
@@ -53,9 +97,21 @@ with st.sidebar:
     render_upload_status(uploaded_names)
 
     st.header("2. Execution Parameters")
+    st.caption(
+        "Your natural-language query is auto-routed (Stage 1 GPT-5) to a mechanism and the "
+        "two entities in play. The controls below act as a default/override."
+    )
     query_topic = st.selectbox(
-        "Routing Domain Override",
+        "Routing Domain (default / fallback)",
         ["Financial Liability Cascade", "Voting Power Structure", "Tax Leakage Tracing"],
+    )
+    start_override = st.text_input(
+        "Start entity (optional)",
+        help="Upstream entity to traverse from. Leave blank to auto-select the controlling parent.",
+    )
+    target_override = st.text_input(
+        "Target entity (optional)",
+        help="Downstream entity to traverse to. Leave blank to auto-select the furthest subsidiary.",
     )
 
     st.header("3. API Gateway Configuration")
@@ -66,12 +122,22 @@ with st.sidebar:
         help="Uses OPENAI_API_KEY from the environment when left blank.",
     )
 
+    st.header("4. Demo Mode")
+    st.caption(
+        "Run the deterministic Layer 2 engine on a bundled multi-tiered fixture graph "
+        "without uploading files or providing an API key."
+    )
+    run_demo = st.button("Run Layer 2 Demo (no API key)")
+
 col1, col2 = st.columns([2, 1])
 
 with col1:
     st.write("### Network Topology View")
     if st.session_state.extraction_result:
-        render_graph_preview(st.session_state.extraction_result.graph)
+        render_graph_visualization(
+            st.session_state.extraction_result.graph,
+            st.session_state.calculation_result,
+        )
     else:
         st.info("Upload SEC filing .htm or .txt files and run extraction to populate the entity map.")
 
@@ -85,7 +151,7 @@ with col2:
     )
     st.text_area(
         "Graph Computation Layer",
-        value="[SKIPPED] Graph cascade computation is not implemented in this build.",
+        value=st.session_state.compute_trace,
         height=120,
         disabled=True,
     )
@@ -99,9 +165,23 @@ user_query = st.text_input(
 
 run_pipeline = st.button("Execute LLM Pipeline", type="primary")
 
+
+if run_demo:
+    st.session_state.pipeline_error = None
+    st.session_state.synthesis_result = None
+    extraction_result = load_sample_extraction_result()
+    st.session_state.extraction_result = extraction_result
+    st.session_state.routing_trace = (
+        "[DEMO] Loaded bundled fixture graph; no LLM extraction performed."
+    )
+    run_layer_2(extraction_result, query_topic, start_override, target_override)
+    st.rerun()
+
+
 if run_pipeline:
     st.session_state.pipeline_error = None
     st.session_state.extraction_result = None
+    st.session_state.calculation_result = None
     st.session_state.synthesis_result = None
 
     if not uploaded_files:
@@ -130,14 +210,45 @@ if run_pipeline:
                     f"document(s) under domain '{query_topic}'."
                 )
 
+            with st.spinner("Stage 1 routing: mapping the query to a mechanism and entities..."):
+                effective_topic = query_topic
+                routed_start = start_override or None
+                routed_target = target_override or None
+                if not (routed_start and routed_target):
+                    try:
+                        node_ids = [node.id for node in extraction_result.graph.nodes]
+                        route = route_query(
+                            user_query=user_query.strip(),
+                            default_topic=query_topic,
+                            node_ids=node_ids,
+                            api_key=api_key,
+                        )
+                        effective_topic = route.mechanism or query_topic
+                        routed_start = routed_start or route.start_node
+                        routed_target = routed_target or route.target_node
+                        st.session_state.routing_trace += (
+                            f"\n[ROUTE] mechanism='{effective_topic}', "
+                            f"start='{routed_start}', target='{routed_target}'."
+                        )
+                    except Exception as route_exc:
+                        st.session_state.routing_trace += (
+                            f"\n[ROUTE] LLM routing skipped ({route_exc}); using deterministic selection."
+                        )
+
+            with st.spinner("Layer 2: Running deterministic graph cascade computation..."):
+                calculation = run_layer_2(
+                    extraction_result, effective_topic, routed_start, routed_target
+                )
+
             with st.spinner("Layer 3: Synthesizing audit-ready response..."):
                 synthesis_result = synthesize_answer(
                     user_query=user_query.strip(),
-                    query_topic=query_topic,
+                    query_topic=effective_topic,
                     graph_payload=extraction_result.graph,
                     source_documents=source_documents,
                     extraction_summary=extraction_result.extraction_summary,
                     api_key=api_key,
+                    calculation=calculation,
                 )
                 st.session_state.synthesis_result = synthesis_result
         except ValueError as exc:
@@ -150,6 +261,9 @@ if st.session_state.pipeline_error:
 
 if st.session_state.extraction_result:
     render_extraction_result(st.session_state.extraction_result)
+
+if st.session_state.calculation_result:
+    render_calculation_result(st.session_state.calculation_result)
 
 if st.session_state.synthesis_result:
     render_synthesis_result(st.session_state.synthesis_result)
